@@ -1,0 +1,21 @@
+{
+    "name": "Papargyri_2020_1",
+    "desc": "A study looking at the relationship between nucleobase and LNA sequence on aso activity and cytotoxicity.",
+    "modality": "ASO",
+    "size": 768,
+    "label_desc": "Minmax-scaled average caspase level (N=3) measured in HeLa cells",
+    "model_system": "In vitro",
+    "collection": "Toxicity",
+    "num_targets": 1,
+    "task": "Regression",
+    "rec_split": "Random",
+    "rec_metric": [
+        "Spearmanr",
+        "Pearsonr"
+    ],
+    "featurizers": [
+        "OneHotEncoder",
+        "KMersCounts"
+    ],
+    "source": "https://doi.org/10.1016/j.omtn.2019.12.011"
+}

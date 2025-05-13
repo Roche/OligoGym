@@ -1,0 +1,24 @@
+{
+    "name": "McQuisten_2007_1",
+    "desc": "An ASO-activity dataset collected by IDT from a now defunct ASO database (https://doi.org/10.1093/bioinformatics/16.9.843) and also from patent data. According to the publication each ASO have a full phosphothioate backbone and no chimeric sequences.",
+    "modality": "ASO",
+    "size": 3913,
+    "label_desc": "Activity range from 0 (complete target inhibition) to  1 (no difference in target activity when compared to appropriate control). The activity were all measured from either protein product or direct mRNA level.",
+    "model_system": "undefined",
+    "collection": "Activity",
+    "num_targets": 86,
+    "task": "Regression",
+    "rec_split": "Random",
+    "rec_metric": [
+        "Spearmanr",
+        "Pearsonr"
+    ],
+    "featurizers": [
+        "OneHotEncoder",
+        "KMersCounts"
+    ],
+    "source": [
+        "https://doi.org/10.1186/1471-2105-8-184",
+        "https://github.com/lackeylela/openASO"
+    ]
+}

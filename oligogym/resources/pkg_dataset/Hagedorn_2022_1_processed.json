@@ -1,0 +1,21 @@
+{
+    "name": "Hagedorn_2022_1",
+    "desc": "Acute nuerotox of LNA gapmer as measured by calcium oscillation score in cell",
+    "modality": "ASO",
+    "size": 1825,
+    "label_desc": "Calcium oscillation score",
+    "model_system": "In vitro",
+    "collection": "Toxicity",
+    "num_targets": 3,
+    "task": "Regression",
+    "rec_split": "Random",
+    "rec_metric": [
+        "Spearmanr",
+        "Pearsonr"
+    ],
+    "featurizers": [
+        "OneHotEncoder",
+        "KMersCounts"
+    ],
+    "source": "https://doi.org/10.1089/nat.2021.0071"
+}

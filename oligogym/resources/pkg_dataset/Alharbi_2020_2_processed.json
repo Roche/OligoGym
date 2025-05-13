@@ -1,0 +1,21 @@
+{
+    "name": "Alharbi_2020_2",
+    "desc": "2'OMe gapmer screen of TLR7 inhibition",
+    "modality": "ASO",
+    "size": 192,
+    "label_desc": "TLR7 level after induction with 100nM ASO as measured by fluorescence as using NF-κB-Luciferase reporter in HEK293-TLR7 cells. Values relative to those obtained after induction with Resiquimod (=100)",
+    "model_system": "In vitro",
+    "collection": "Immunomodulation",
+    "num_targets": 4,
+    "task": "Regression",
+    "rec_split": "Random",
+    "rec_metric": [
+        "Spearmanr",
+        "Pearsonr"
+    ],
+    "featurizers": [
+        "OneHotEncoder",
+        "KMersCounts"
+    ],
+    "source": "https://doi.org/10.1093/nar/gkaa523"
+}

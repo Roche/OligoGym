@@ -1,0 +1,28 @@
+dataset:
+  - acute_neurotox_lna
+
+featurizer:
+  - KMersCounts
+
+model:
+  - LinearModel
+
+cross_validation:
+  - random
+
+featurizer_args:
+  KMersCounts:
+    k: 
+      - [1]
+      - [1, 2]
+      - [1, 2, 3]
+    modification_abundance:
+     - False
+     - True
+
+model_args:
+  LinearModel:
+    type:
+      - 'standard'
+      - 'ridge'
+ 

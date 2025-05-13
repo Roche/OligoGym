@@ -1,0 +1,53 @@
+[tool.poetry]
+name = "oligogym"
+version = "0.1.0"
+description = ""
+authors = [
+    "Carlo De Donno <carlo.de_donno@roche.com>",
+    "Rachapun Rotrattanadumrong <rachapun.rotrattanadumrong@roche.com>",
+    ]
+    
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = ">=3.11"
+numpy = "^1.26.4"
+pandas = "^2.2.1"
+matplotlib = "^3.8.3"
+seaborn = "^0.13.2"
+scikit-learn = "1.4.0"
+pytorch-lightning = "2.2.1"
+xgboost = "^2.0.3"
+fuzzywuzzy = "^0.18.0"
+python-levenshtein = "^0.25.1"
+viennarna = "^2.6.4"
+biopython = "^1.84"
+tabpfn = "^2.0.6"
+
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.1.1"
+pluggy = "1.4.0"
+flake8 = "^7.0.0"
+black = "^24.3.0"
+openpyxl = "^3.1.2"
+torchinfo = "^1.8.0"
+isort = "^5.13.2"
+ipython = "^8.24.0"
+jupyterlab = "^4.1.5"
+adjusttext = "^1.1.1"
+colorcet = "^3.1.0"
+sphinx = "^8.2.3"
+sphinx-rtd-theme = "^3.0.2"
+sphinx-autoapi = "^3.6.0"
+myst-nb = "^1.2.0"
+pydata-sphinx-theme = "^0.16.1"
+mlcroissant = "^1.0.17"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[[tool.poetry.source]]
+name = "PyPI"
+priority = "primary"

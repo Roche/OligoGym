@@ -1,0 +1,21 @@
+{
+    "name": "Shmushkovich_2018_1",
+    "desc": "Study of cholesterol-conjugated siRNA efficacy using dual luciferase reporter in HeLa cells at 1 μM",
+    "modality": "siRNA",
+    "size": 356,
+    "label_desc": "Percentage remaining relative to control of siRNA measured using dual luciferase reporter in HeLa cells at 1 μM",
+    "model_system": "In vitro",
+    "collection": "Activity",
+    "num_targets": 1,
+    "task": "Regression",
+    "rec_split": "Random",
+    "rec_metric": [
+        "Spearmanr",
+        "Pearsonr"
+    ],
+    "featurizers": [
+        "OneHotEncoder",
+        "KMerCounts"
+    ],
+    "source": "https://doi.org/10.1093/nar/gky745"
+}

@@ -1,0 +1,21 @@
+{
+    "name": "Hwang_2024_1",
+    "desc": "A collection of inhibitory activity for different gapmers ASO collected from various patents and publication",
+    "modality": "ASO",
+    "size": 32602,
+    "label_desc": "Percentage inhibition of target mRNA relative to untreated controls",
+    "model_system": "In vitro",
+    "collection": "Activity",
+    "num_targets": 18,
+    "task": "Regression",
+    "rec_split": "Random",
+    "rec_metric": [
+        "Spearmanr",
+        "Pearsonr"
+    ],
+    "featurizers": [
+        "OneHotEncoder",
+        "KMerCounts"
+    ],
+    "source": "https://doi.org/10.1016/j.omtn.2024.102186"
+}

@@ -1,0 +1,21 @@
+{
+    "name": "Knott_2014_1",
+    "desc": "A biased screening of shRNA using the miR-30 scaffold, DSIR algorithm was used to select for sequences likely to be active",
+    "modality": "shRNA",
+    "size": 291551,
+    "label_desc": "MinMax-scaled score from the raw score obtained from a high-throughput assay based on sort-seq strategy using fluorescence reporter construct with the target site in the 3UTR of the reporter gene.",
+    "model_system": "In vitro",
+    "collection": "Activity",
+    "num_targets": 17802,
+    "task": "Regression",
+    "rec_split": "Random",
+    "rec_metric": [
+        "Spearmanr",
+        "Pearsonr"
+    ],
+    "featurizers": [
+        "OneHotEncoder",
+        "KMersCounts"
+    ],
+    "source": "https://doi.org/10.1016/j.molcel.2014.10.025"
+}

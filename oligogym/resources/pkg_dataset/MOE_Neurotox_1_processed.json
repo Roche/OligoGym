@@ -1,0 +1,35 @@
+{
+    "name": "MOE_Neurotox_1",
+    "desc": "Acute neurotox data for MOE modifed ASOs scraped from patent",
+    "modality": "ASO",
+    "size": 2437,
+    "label_desc": "Rounded 3h FOB score in mice (7 categories: 0 (safe) > 7(toxic))",
+    "model_system": "In vivo",
+    "collection": "Acute Neurotoxicity",
+    "num_targets": 13,
+    "task": "Regression",
+    "rec_split": "Random",
+    "rec_metric": [
+        "Spearmanr",
+        "Pearsonr"
+    ],
+    "featurizers": [
+        "OneHotEncoder",
+        "KMersCounts"
+    ],
+    "source": [
+        "https://patents.google.com/patent/WO2020172559A1",
+        "https://patents.google.com/patent/WO2016168592A2",
+        "https://patents.google.com/patent/WO2021021673A1",
+        "https://patents.google.com/patent/WO2015153800A2",
+        "https://patents.google.com/patent/WO2020205463A1",
+        "https://patents.google.com/patent/WO2020006267A1",
+        "https://patents.google.com/patent/WO2020023737A1",
+        "https://patents.google.com/patent/WO2020243292A1",
+        "https://patents.google.com/patent/WO2020106996A1",
+        "https://patents.google.com/patent/WO2022026589A1",
+        "https://patents.google.com/patent/WO2022165122A1",
+        "https://patents.google.com/patent/WO2021174019A1",
+        "https://patents.google.com/patent/WO2022032060A2"
+    ]
+}

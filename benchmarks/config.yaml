@@ -1,0 +1,107 @@
+dataset:
+  - acute_neurotox_lna
+  - acute_neurotox_moe
+  - acute_neurotox_moe_cleaned
+  - cytotox_lna
+  - hepatotox_lna
+  - immune_modulation_TLR7
+  - immune_modulation_TLR8
+  - siRNA1
+  - siRNA2
+  - siRNA3
+  - sherwood
+  - siRNAmod
+  - asoptimizer
+  - asoptimizer_cleaned
+  - openASO
+
+featurizer:
+  - OneHotEncoder
+  - KMersCounts
+
+model:
+  - CNN
+  - MLP
+  - GRU
+  - LinearModel
+  - RandomForestModel
+  - NearestNeighborsModel
+  - XGBoostModel
+  - TabPFNModel
+
+cross_validation:
+  - random
+  - nucleobase
+
+featurizer_args:
+  OneHotEncoder:
+    encode_components:
+      - ['base']
+      - ['base', 'sugar', 'phosphate']
+  KMersCounts:
+    k: 
+      - [1]
+      - [1, 2]
+      - [1, 2, 3]
+    modification_abundance:
+     - False
+     - True
+
+model_args:
+  LinearModel:
+    type:
+      - 'standard'
+      - 'ridge'
+  XGBoostModel:
+    n_estimators: 
+      - 100
+      - 500
+      - 1000
+    max_depth: 
+      - 10
+      - 20
+      - 30
+  RandomForestModel:
+    n_estimators: 
+      - 100
+      - 500
+      - 1000
+    max_depth: 
+      - 10
+      - 20
+      - 30
+  NearestNeighborsModel:
+    n_neighbors: 
+      - 5
+      - 10
+      - 15
+  CNN:
+    depth: 
+      - 1
+      - 2
+    hidden_dim: 
+      - 32
+      - 64
+    kernel_size:
+      - 3
+      - 5
+      - 7
+    pooling_operation:
+      - 'max'
+      - 'avg'
+  MLP:
+    hidden_dims: 
+      - [64]
+      - [64, 64]
+      - [128]
+      - [128, 128]
+    dropout: 
+      - 0
+      - 0.25
+  GRU:
+    hidden_dim: 
+      - 32
+      - 64
+    num_layers: 
+      - 1
+      - 2

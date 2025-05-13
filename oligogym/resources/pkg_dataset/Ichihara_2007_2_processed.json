@@ -1,0 +1,21 @@
+{
+    "name": "Ichihara_2007_2",
+    "desc": "A precurated collection of unmodified siRNA potency data. The dataset can be split into two. Ichihara_2007_2 is a dataset from 5 different studies with different assays so its likely the quality is worse than Ichihara_2007_1.",
+    "modality": "siRNA",
+    "size": 419,
+    "label_desc": "Percentage inhibition relative to control from various assays as reported by authors of the curated dataset.",
+    "model_system": "In vitro",
+    "collection": "Activity",
+    "num_targets": 12,
+    "task": "Regression",
+    "rec_split": "Random",
+    "rec_metric": [
+        "Spearmanr",
+        "Pearsonr"
+    ],
+    "featurizers": [
+        "OneHotEncoder",
+        "KMersCounts"
+    ],
+    "source": "https://doi.org/10.1093/nar/gkm699"
+}

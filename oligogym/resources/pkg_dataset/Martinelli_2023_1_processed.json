@@ -1,0 +1,21 @@
+{
+    "name": "Martinelli_2023_1",
+    "desc": "A curated siRNA potency dataset that contain only sugar and base information.",
+    "modality": "siRNA",
+    "size": 907,
+    "label_desc": "Percentage knockdown of the target mRNA",
+    "model_system": "undefined",
+    "collection": "Activity",
+    "num_targets": 1,
+    "task": "Regression",
+    "rec_split": "Random",
+    "rec_metric": [
+        "Spearmanr",
+        "Pearsonr"
+    ],
+    "featurizers": [
+        "OneHotEncoder",
+        "KMersCounts"
+    ],
+    "source": "https://doi.org/10.1016/j.ygeno.2024.110815"
+}
