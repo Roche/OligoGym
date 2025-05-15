@@ -336,7 +336,7 @@ def nucleobase_split(
             n_splits=1, test_size=val_size_adjusted, random_state=random_state
         )
         val_idx, test_idx = next(
-            gss_val.split(X_temp, y_temp, kmeans.labels_[temp_idx])
+            gss_val.split(X_temp, y_temp, group_labels[temp_idx])
         )
         X_val, X_test = X_temp[val_idx], X_temp[test_idx]
         y_val, y_test = y_temp[val_idx], y_temp[test_idx]

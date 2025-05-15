@@ -15,7 +15,7 @@ from oligogym.data import DatasetDownloader
 downloader = DatasetDownloader()
 data = downloader.download("siRNA1")
 X_train, X_test, y_train, y_test = data.split(split_strategy="random")
-featurizer = KMersCounts(k=[1, 2, 3], modification_abundance=True)
+feat = KMersCounts(k=[1, 2, 3], modification_abundance=True)
 X_kmer_train = feat.fit_transform(X_train)
 X_kmer_test = feat.transform(X_test)
 
