@@ -30,7 +30,6 @@ The following featurizers are currently implemented:
 - KMersCounts
 - OneHotEncoder
 - Thermodynamics
-- TargetDescriptors
 
 ## Models
 The following models are currently implemented:
