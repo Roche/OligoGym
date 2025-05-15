@@ -1,5 +1,4 @@
 import pandas as pd
-from fuzzywuzzy import process
 
 from .data import Dataset
 
@@ -55,42 +54,28 @@ class DatasetDownloader:
                 print(f"All datasets have been successfully downloaded.")
             return tuple(datasets)
         else:
-            closest_match_key, match_score_key = process.extractOne(
-                dataset_key, self.all_datasets_info["key"].to_list()
-            )
-            closest_match_name, match_score_name = process.extractOne(
-                dataset_key, self.all_datasets_info["name"].to_list()
-            )
+            all_keys = [i.lower() for i in self.all_datasets_info["key"].to_list()]
 
-            if match_score_key > match_score_name:
-                index_of_closest_match = self.all_datasets_info[
-                    self.all_datasets_info["key"] == closest_match_key
-                ].index[0]
-                closest_match = self.all_datasets_info.iloc[index_of_closest_match][
-                    "name"
-                ]
-                match_score = match_score_key
-            else:
-                closest_match = closest_match_name
-                match_score = match_score_name
+            dataset_map = dict(zip(all_keys, self.all_datasets_info["name"].to_list()))
 
-            if match_score < 50:
-                print(f"Error: The provided dataset_key '{dataset_key}' is not valid.")
-                return None
-            else:
-                with pkg_resources.open_binary(pkg_dataset, f"{closest_match}_processed.csv.gz") as file:
-                    df = pd.read_csv(file, compression='gzip')
+            # Explicitly raise an exception if the dataset_key is not valid
+            if dataset_key.lower() not in all_keys:
+                raise ValueError(f"Error: The provided dataset_key '{dataset_key}' is not valid.")
 
-                with pkg_resources.open_binary(pkg_dataset, f"{closest_match}_processed.json") as file:
-                    json_dict = json.load(file)
+            print(dataset_map[dataset_key.lower()])
+            with pkg_resources.open_binary(pkg_dataset, f"{dataset_map[dataset_key.lower()]}_processed.csv.gz") as file:
+                df = pd.read_csv(file, compression='gzip')
 
-                dataset = Dataset(json_dict)
-                dataset.build(df)
-                if verbose > 0:
-                    print(
-                        f"Dataset '{closest_match}' has been successfully downloaded."
-                    )
-                return dataset
+            with pkg_resources.open_binary(pkg_dataset, f"{dataset_map[dataset_key.lower()]}_processed.json") as file:
+                json_dict = json.load(file)
+
+            dataset = Dataset(json_dict)
+            dataset.build(df)
+            if verbose > 0:
+                print(
+                    f"Dataset '{dataset_map[dataset_key.lower()]}' has been successfully downloaded."
+                )
+            return dataset
 
     def show_available_datasets(self, full_info=False):
         """
