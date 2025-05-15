@@ -50,7 +50,7 @@ The following models are currently implemented:
 
 ## Prerequisites
 
-- Python 3.10+
+- Python 3.11+
 - [Poetry](https://python-poetry.org/docs/#installation)
 
 ## Installation
