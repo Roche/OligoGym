@@ -867,3 +867,145 @@ class CausalCNN(LightningModel):
         if self.task == "classification":
             x = nn.functional.softmax(x, dim=1)
         return x
+
+
+class Transformer(LightningModel):
+    """
+    Transformer model for regression or classification tasks on sequence data.
+    
+    This model implements a basic transformer architecture using multi-head self-attention
+    mechanisms. It can handle sequence data and supports both regression and classification tasks.
+    
+    Args:
+        input_dim (int): The number of input features per position in the sequence.
+        seq_len (int): The length of the input sequences.
+        d_model (int, optional): The dimension of the model (embedding dimension). Defaults to 128.
+        nhead (int, optional): The number of attention heads. Defaults to 8.
+        num_layers (int, optional): The number of transformer encoder layers. Defaults to 6.
+        dim_feedforward (int, optional): The dimension of the feedforward network. Defaults to 512.
+        output_dim (int, optional): The number of output dimensions. Defaults to 1.
+        dropout (float, optional): The dropout rate. Defaults to 0.1.
+        activation (str, optional): The activation function to use. Must be either "relu" or "gelu". Defaults to "relu".
+        task (str, optional): The task type. Must be either "regression" or "classification". Defaults to "regression".
+        use_positional_encoding (bool, optional): Whether to use positional encoding. Defaults to True.
+        
+    Raises:
+        AssertionError: If `task` is not "regression" or "classification".
+        AssertionError: If `activation` is not "relu" or "gelu".
+        AssertionError: If `d_model` is not divisible by `nhead`.
+    """
+    
+    def __init__(
+        self,
+        input_dim: int,
+        seq_len: int,
+        d_model: int = 128,
+        nhead: int = 8,
+        num_layers: int = 6,
+        dim_feedforward: int = 512,
+        output_dim: int = 1,
+        dropout: float = 0.1,
+        activation: str = "relu",
+        task: str = "regression",
+        use_positional_encoding: bool = True,
+    ):
+        """
+        Initializes the Transformer model.
+        """
+        super().__init__()
+        assert task in ["regression", "classification"], "Task undefined"
+        assert activation in ["relu", "gelu"], "Activation undefined"
+        assert d_model % nhead == 0, "d_model must be divisible by nhead"
+        
+        self.task = task
+        self.d_model = d_model
+        self.seq_len = seq_len
+        self.use_positional_encoding = use_positional_encoding
+        
+        # Input projection
+        self.input_projection = nn.Linear(input_dim, d_model)
+        
+        # Positional encoding
+        if self.use_positional_encoding:
+            self.positional_encoding = self._create_positional_encoding(seq_len, d_model)
+        
+        # Transformer encoder layers
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=nhead,
+            dim_feedforward=dim_feedforward,
+            dropout=dropout,
+            activation=activation,
+            batch_first=True
+        )
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        
+        # Output layers
+        self.dropout = nn.Dropout(dropout)
+        self.fc = nn.Linear(d_model, output_dim)
+        
+        # Loss function
+        self.loss_fun = (
+            nn.MSELoss() if self.task == "regression" else nn.CrossEntropyLoss()
+        )
+    
+    def _create_positional_encoding(self, seq_len: int, d_model: int) -> torch.Tensor:
+        """
+        Create positional encoding for the transformer.
+        
+        Args:
+            seq_len (int): Sequence length.
+            d_model (int): Model dimension.
+            
+        Returns:
+            torch.Tensor: Positional encoding tensor.
+        """
+        pe = torch.zeros(seq_len, d_model)
+        position = torch.arange(0, seq_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-torch.log(torch.tensor(10000.0)) / d_model))
+        
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = pe.unsqueeze(0)  # Add batch dimension
+        
+        return pe
+    
+    def forward(self, x):
+        """
+        Forward pass of the Transformer model.
+        
+        Args:
+            x (torch.Tensor): Input tensor of shape (batch_size, seq_len, input_dim) or (batch_size, input_dim, seq_len).
+            
+        Returns:
+            torch.Tensor: Output tensor.
+        """
+        # Handle different input formats
+        if len(x.shape) == 3 and x.shape[1] != self.seq_len:
+            x = x.transpose(1, 2)  # Convert from (batch, features, seq) to (batch, seq, features)
+        
+        batch_size = x.shape[0]
+        
+        # Project input to model dimension
+        x = self.input_projection(x)  # (batch_size, seq_len, d_model)
+        
+        # Add positional encoding
+        if self.use_positional_encoding:
+            if self.positional_encoding.device != x.device:
+                self.positional_encoding = self.positional_encoding.to(x.device)
+            x = x + self.positional_encoding[:, :x.shape[1], :]
+        
+        # Apply transformer encoder
+        x = self.transformer_encoder(x)  # (batch_size, seq_len, d_model)
+        
+        # Global average pooling over sequence dimension
+        x = torch.mean(x, dim=1)  # (batch_size, d_model)
+        
+        # Apply dropout and final linear layer
+        x = self.dropout(x)
+        x = self.fc(x)  # (batch_size, output_dim)
+        
+        if self.task == "classification":
+            x = nn.functional.softmax(x, dim=1)
+        
+        return x

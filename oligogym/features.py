@@ -15,6 +15,13 @@ import RNA
 from .helm import helm2xna, xna2helm
 from .utils import count_overlapping, merge_dicts
 
+try:
+    import torch
+    import fm
+    RNA_FM_AVAILABLE = True
+except ImportError:
+    RNA_FM_AVAILABLE = False
+
 ORDERED_COMPONENTS = ["phosphate", "sugar", "base"]
 DG_RNA = {
     "AA": -0.93,
@@ -874,3 +881,322 @@ class Thermodynamics:
         return self.fit_transform(
             oligo_list, target_mrnas, nearest_neighbors_params, pad_length, pad_value
         )
+
+
+class RNAFMEmbeddings:
+    """
+    A class to extract RNA-FM embeddings from RNA sequences.
+    
+    RNA-FM is a foundation model for RNA sequences that generates meaningful embeddings
+    by leveraging self-supervised learning on large RNA datasets. This featurizer
+    converts HELM notation sequences to FASTA format and extracts embeddings using
+    the RNA-FM model.
+    
+    Args:
+        model_path (str, optional): Path to the RNA-FM model. If None, uses default pretrained model.
+        max_length (int, optional): Maximum sequence length for padding/truncation. Defaults to None (auto-detect).
+        pooling_strategy (str, optional): Strategy for pooling token embeddings when flatten=True. 
+            Options: "mean", "max", "cls". Defaults to "mean".
+        batch_size (int, optional): Batch size for processing multiple sequences. Defaults to 8.
+        device (str, optional): Device to run the model on. Defaults to "auto" (uses CUDA if available).
+        strands (Optional[List[str]], optional): List of strands to consider. Defaults to None.
+        
+    Raises:
+        ImportError: If RNA-FM package is not available.
+        AssertionError: If pooling_strategy is not one of the supported options.
+    """
+    
+    def __init__(
+        self,
+        model_path: str = None,
+        max_length: int = None,
+        pooling_strategy: str = "mean",
+        batch_size: int = 8,
+        device: str = "auto",
+        strands: Optional[List[str]] = None,
+    ):
+        """
+        Initializes the RNA-FM embeddings featurizer.
+        """
+        if not RNA_FM_AVAILABLE:
+            raise ImportError(
+                "RNA-FM package is required for RNA-FM embeddings. "
+                "Install with: pip install fair-esm"
+            )
+        
+        assert pooling_strategy in ["mean", "max", "cls"], (
+            "pooling_strategy must be one of: 'mean', 'max', 'cls'"
+        )
+        
+        self.model_path = model_path
+        self.max_length = max_length
+        self.pooling_strategy = pooling_strategy
+        self.batch_size = batch_size
+        self.strands = strands
+        
+        # Set device
+        if device == "auto":
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        else:
+            self.device = torch.device(device)
+        
+        # Initialize model
+        self._load_model()
+    
+    def _load_model(self):
+        """
+        Load the RNA-FM model.
+        """
+        try:
+            # Load the pretrained RNA-FM model
+            if self.model_path is None:
+                # Use the default pretrained model
+                self.model, self.alphabet = fm.pretrained.rna_fm_t12()
+            else:
+                # Load from custom path
+                self.model, self.alphabet = torch.load(self.model_path)
+            
+            self.model.to(self.device)
+            self.model.eval()
+            self.batch_converter = self.alphabet.get_batch_converter()
+            
+        except Exception as e:
+            warnings.warn(f"Could not load RNA-FM model: {e}")
+            self.model = None
+            self.alphabet = None
+            self.batch_converter = None
+    
+    def _extract_monomers(self, oligo_helm: str) -> pd.DataFrame:
+        """
+        Extract monomers from an oligo sequence.
+        
+        Args:
+            oligo_helm (str): Oligo sequence in HELM notation.
+            
+        Returns:
+            pd.DataFrame: DataFrame containing the extracted monomers.
+        """
+        return _extract_monomers(oligo_helm, self.strands)
+    
+    def _helm_to_fasta(self, oligo_helm: str) -> str:
+        """
+        Convert a HELM notation sequence to a FASTA sequence.
+        
+        Args:
+            oligo_helm (str): The HELM notation sequence.
+            
+        Returns:
+            str: The corresponding FASTA sequence.
+        """
+        try:
+            monomers = self._extract_monomers(oligo_helm)
+            # Extract base information and convert to FASTA
+            monomers["base"] = monomers["base"].replace("EMPTY", "")
+            # Handle modified bases by taking the last character (canonical base)
+            monomers["base"] = monomers["base"].str[-1]
+            fasta_str = monomers["base"].str.cat()
+            # Convert T to U for RNA
+            fasta_str = fasta_str.replace("T", "U")
+            return fasta_str
+        except Exception as e:
+            warnings.warn(f"Could not convert HELM to FASTA: {e}")
+            return ""
+    
+    def _get_embeddings_batch(self, sequences: List[str]) -> np.ndarray:
+        """
+        Get embeddings for a batch of sequences.
+        
+        Args:
+            sequences (List[str]): List of FASTA sequences.
+            
+        Returns:
+            np.ndarray: Array of embeddings with shape (batch_size, max_seq_len, embedding_dim).
+        """
+        if self.model is None or self.batch_converter is None:
+            # Fallback: return simple sequence features
+            warnings.warn("RNA-FM model not available, returning simple sequence features")
+            return self._get_simple_features(sequences)
+        
+        try:
+            # Prepare data for RNA-FM
+            data = [(f"seq_{i}", seq) for i, seq in enumerate(sequences)]
+            batch_labels, batch_strs, batch_tokens = self.batch_converter(data)
+            batch_tokens = batch_tokens.to(self.device)
+            
+            # Get embeddings from the model
+            with torch.no_grad():
+                results = self.model(batch_tokens, repr_layers=[12])  # Use layer 12 representations
+                token_representations = results["representations"][12]
+            
+            # Remove special tokens (first and last tokens are special)
+            # token_representations shape: (batch_size, seq_len + 2, hidden_size)
+            embeddings = []
+            
+            for i, seq_len in enumerate([len(seq) for seq in sequences]):
+                # Remove BOS and EOS tokens (first and last)
+                seq_repr = token_representations[i, 1:seq_len+1]  # (seq_len, hidden_size)
+                embeddings.append(seq_repr.cpu().numpy())
+            
+            return embeddings
+            
+        except Exception as e:
+            warnings.warn(f"Error getting RNA-FM embeddings: {e}")
+            return self._get_simple_features(sequences)
+    
+    def _get_simple_features(self, sequences: List[str]) -> List[np.ndarray]:
+        """
+        Fallback method to get simple sequence features when RNA-FM is not available.
+        
+        Args:
+            sequences (List[str]): List of FASTA sequences.
+            
+        Returns:
+            List[np.ndarray]: List of arrays with simple per-nucleotide features.
+        """
+        features = []
+        for seq in sequences:
+            # Simple per-nucleotide features: one-hot encoding
+            seq_features = []
+            nucleotide_to_idx = {'A': 0, 'U': 1, 'G': 2, 'C': 3, 'N': 4}  # N for unknown
+            
+            for nucleotide in seq:
+                one_hot = np.zeros(6)  # 5 for nucleotides + 1 for position info
+                idx = nucleotide_to_idx.get(nucleotide.upper(), 4)  # Default to 'N'
+                one_hot[idx] = 1
+                # Add simple position encoding
+                one_hot[5] = len(seq_features) / max(len(seq), 1)  # Normalized position
+                seq_features.append(one_hot)
+            
+            features.append(np.array(seq_features))
+        
+        return features
+    
+    def _extract_features(self, oligo_helm: str) -> np.ndarray:
+        """
+        Extract RNA-FM embeddings from a single oligo sequence.
+        
+        Args:
+            oligo_helm (str): Oligonucleotide in HELM notation.
+            
+        Returns:
+            np.ndarray: Array containing the RNA-FM embeddings with shape (seq_len, embedding_dim).
+        """
+        fasta_seq = self._helm_to_fasta(oligo_helm)
+        if not fasta_seq:
+            # Return zero embeddings if conversion fails
+            if self.model is not None:
+                return np.zeros((1, 640))  # Single position with RNA-FM embedding dimension
+            else:
+                return np.zeros((1, 6))  # Single position with simple features dimension
+        
+        embeddings = self._get_embeddings_batch([fasta_seq])
+        return embeddings[0]
+    
+    def fit_transform(self, oligo_list: List[str], flatten: bool = False) -> Union[np.ndarray, pd.DataFrame]:
+        """
+        Extract RNA-FM embeddings from a list of oligo sequences.
+        
+        Args:
+            oligo_list (List[str]): List of oligo sequences in HELM notation.
+            flatten (bool, optional): If True, applies pooling and returns DataFrame. 
+                                    If False, returns 3D numpy array. Defaults to False.
+            
+        Returns:
+            Union[np.ndarray, pd.DataFrame]: If flatten=False, returns numpy array with shape 
+                                           (n_samples, max_seq_len, embedding_dim).
+                                           If flatten=True, returns DataFrame with pooled embeddings.
+        """
+        return self.transform(oligo_list, flatten=flatten)
+    
+    def transform(self, oligo_list: List[str], flatten: bool = False) -> Union[np.ndarray, pd.DataFrame]:
+        """
+        Transform a list of oligo sequences into RNA-FM embeddings.
+        
+        Args:
+            oligo_list (List[str]): List of oligo sequences in HELM notation.
+            flatten (bool, optional): If True, applies pooling and returns DataFrame. 
+                                    If False, returns 3D numpy array. Defaults to False.
+            
+        Returns:
+            Union[np.ndarray, pd.DataFrame]: If flatten=False, returns numpy array with shape 
+                                           (n_samples, max_seq_len, embedding_dim).
+                                           If flatten=True, returns DataFrame with pooled embeddings.
+        """
+        # Convert HELM to FASTA
+        fasta_sequences = [self._helm_to_fasta(oligo) for oligo in oligo_list]
+        
+        # Filter out empty sequences and keep track of indices
+        valid_sequences = []
+        valid_indices = []
+        for i, seq in enumerate(fasta_sequences):
+            if seq:
+                valid_sequences.append(seq)
+                valid_indices.append(i)
+        
+        # Process valid sequences in batches
+        valid_embeddings = []
+        for i in range(0, len(valid_sequences), self.batch_size):
+            batch_sequences = valid_sequences[i:i + self.batch_size]
+            batch_embeddings = self._get_embeddings_batch(batch_sequences)
+            valid_embeddings.extend(batch_embeddings)
+        
+        # Determine maximum sequence length and embedding dimension
+        if valid_embeddings:
+            max_seq_len = max(emb.shape[0] for emb in valid_embeddings)
+            embedding_dim = valid_embeddings[0].shape[1]
+        else:
+            max_seq_len = 1
+            embedding_dim = 640 if self.model is not None else 6
+        
+        # Use provided max_length if specified
+        if self.max_length is not None:
+            max_seq_len = max(max_seq_len, self.max_length)
+        
+        # Create padded embeddings array
+        all_embeddings = np.zeros((len(oligo_list), max_seq_len, embedding_dim))
+        
+        # Fill in embeddings for valid sequences with padding
+        valid_emb_idx = 0
+        for i, seq in enumerate(fasta_sequences):
+            if seq:  # Valid sequence
+                emb = valid_embeddings[valid_emb_idx]
+                seq_len = min(emb.shape[0], max_seq_len)  # Handle truncation
+                all_embeddings[i, :seq_len, :] = emb[:seq_len]
+                valid_emb_idx += 1
+            # Empty sequences remain as zeros
+        
+        if flatten:
+            # Apply pooling strategy and return as DataFrame
+            pooled_embeddings = []
+            for i in range(len(oligo_list)):
+                seq_emb = all_embeddings[i]
+                # Find actual sequence length (non-zero rows)
+                actual_len = np.any(seq_emb, axis=1).sum()
+                if actual_len > 0:
+                    seq_emb_actual = seq_emb[:actual_len]
+                    
+                    if self.pooling_strategy == "mean":
+                        pooled = np.mean(seq_emb_actual, axis=0)
+                    elif self.pooling_strategy == "max":
+                        pooled = np.max(seq_emb_actual, axis=0)
+                    elif self.pooling_strategy == "cls":
+                        pooled = seq_emb_actual[0]  # First position
+                else:
+                    pooled = np.zeros(embedding_dim)
+                
+                pooled_embeddings.append(pooled)
+            
+            pooled_embeddings = np.array(pooled_embeddings)
+            
+            # Create column names for DataFrame
+            if embedding_dim == 6:
+                # Simple features
+                columns = ["A", "U", "G", "C", "N", "position"]
+            else:
+                # RNA-FM embeddings
+                columns = [f"rna_fm_dim_{i}" for i in range(embedding_dim)]
+            
+            return pd.DataFrame(pooled_embeddings, columns=columns)
+        else:
+            # Return 3D array
+            return all_embeddings
