@@ -1,0 +1,33 @@
+
+dataset:
+  - acute_neurotox_lna
+  - acute_neurotox_moe_cleaned
+  - cytotox_lna
+  - immune_modulation_TLR7
+  - immune_modulation_TLR8
+  - siRNA1
+  - siRNA2
+  - siRNA3
+  - sherwood
+  - siRNAmod
+  - asoptimizer_cleaned
+  - openASO
+featurizer:
+  - HELMGraph
+model:
+  - GNN
+cross_validation:
+  - random
+  - nucleobase
+model_args:
+  GNN:
+    hidden_dim: 
+      - 32
+      - 64
+    num_layers:
+      - 1
+      - 2
+    pooling_operation:
+      - max
+      - avg
+      - sum

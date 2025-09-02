@@ -27,7 +27,7 @@ model:
   - RandomForestModel
   - NearestNeighborsModel
   - XGBoostModel
-  - TabPFNModel
+  - Transformer
 
 cross_validation:
   - random
@@ -105,3 +105,19 @@ model_args:
     num_layers: 
       - 1
       - 2
+  Transformer:
+    d_model: 
+      - 64
+      - 128
+    nhead:
+      - 2 
+      - 4
+    dim_feedforward: 
+      - 64
+      - 128
+    num_layers: 
+      - 1
+      - 2
+    dropout: 
+      - 0
+      - 0.25

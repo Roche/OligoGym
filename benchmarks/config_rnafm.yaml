@@ -1,0 +1,38 @@
+dataset:
+  - acute_neurotox_lna
+  - acute_neurotox_moe_cleaned
+  - cytotox_lna
+  - hepatotox_lna
+  - immune_modulation_TLR7
+  - immune_modulation_TLR8
+  - siRNA1
+  - siRNA2
+  - siRNA3
+  - sherwood
+  - siRNAmod
+  - asoptimizer_cleaned
+  - openASO
+
+featurizer:
+  - RNAFMEmbeddings
+
+model:
+  - CNN
+  - LinearModel
+
+cross_validation:
+  - random
+
+model_args:
+  LinearModel:
+    type:
+      - 'ridge'
+  CNN:
+    depth: 
+      - 2
+    hidden_dim: 
+      - 64
+    kernel_size:
+      - 5
+    pooling_operation:
+      - 'max'
