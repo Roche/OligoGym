@@ -1,5 +1,5 @@
 # OligoGym 🏃
-
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Roche/OligoGym)
 ## Description
 
 OligoGym is a package that streamlines the training and evaluation of predictive models of oligonucleotide (ASOs, siRNAs) properties. The core components of OligoGym are its featurizers and models. The featurizers convert compounds represented using the HELM notation into a set of features that can be used by machine learning models. The models are implemented using PyTorch Lightning and scikit-learn, and they can be trained and evaluated on various datasets. They are implemented in a way that allows for easy integration with the featurizers, making it simple to switch between different featurizers and models.
