@@ -7,9 +7,11 @@ from collections import defaultdict
 from itertools import zip_longest, product
 from collections import Counter
 from typing import Dict, List, Optional, Union
+from tqdm import tqdm
 
 import numpy as np
 import pandas as pd
+import networkx as nx
 import RNA
 
 from .helm import helm2xna, xna2helm
@@ -911,9 +913,10 @@ class RNAFMEmbeddings:
         model_path: str = None,
         max_length: int = None,
         pooling_strategy: str = "mean",
-        batch_size: int = 8,
+        batch_size: int = 2056,
         device: str = "auto",
         strands: Optional[List[str]] = None,
+        flatten: bool = False,
     ):
         """
         Initializes the RNA-FM embeddings featurizer.
@@ -921,7 +924,7 @@ class RNAFMEmbeddings:
         if not RNA_FM_AVAILABLE:
             raise ImportError(
                 "RNA-FM package is required for RNA-FM embeddings. "
-                "Install with: pip install fair-esm"
+                "Install with: pip install rna-fm"
             )
         
         assert pooling_strategy in ["mean", "max", "cls"], (
@@ -933,6 +936,7 @@ class RNAFMEmbeddings:
         self.pooling_strategy = pooling_strategy
         self.batch_size = batch_size
         self.strands = strands
+        self.flatten = flatten
         
         # Set device
         if device == "auto":
@@ -990,12 +994,9 @@ class RNAFMEmbeddings:
         """
         try:
             monomers = self._extract_monomers(oligo_helm)
-            # Extract base information and convert to FASTA
             monomers["base"] = monomers["base"].replace("EMPTY", "")
-            # Handle modified bases by taking the last character (canonical base)
             monomers["base"] = monomers["base"].str[-1]
             fasta_str = monomers["base"].str.cat()
-            # Convert T to U for RNA
             fasta_str = fasta_str.replace("T", "U")
             return fasta_str
         except Exception as e:
@@ -1013,12 +1014,10 @@ class RNAFMEmbeddings:
             np.ndarray: Array of embeddings with shape (batch_size, max_seq_len, embedding_dim).
         """
         if self.model is None or self.batch_converter is None:
-            # Fallback: return simple sequence features
             warnings.warn("RNA-FM model not available, returning simple sequence features")
             return self._get_simple_features(sequences)
         
         try:
-            # Prepare data for RNA-FM
             data = [(f"seq_{i}", seq) for i, seq in enumerate(sequences)]
             batch_labels, batch_strs, batch_tokens = self.batch_converter(data)
             batch_tokens = batch_tokens.to(self.device)
@@ -1041,35 +1040,7 @@ class RNAFMEmbeddings:
             
         except Exception as e:
             warnings.warn(f"Error getting RNA-FM embeddings: {e}")
-            return self._get_simple_features(sequences)
-    
-    def _get_simple_features(self, sequences: List[str]) -> List[np.ndarray]:
-        """
-        Fallback method to get simple sequence features when RNA-FM is not available.
-        
-        Args:
-            sequences (List[str]): List of FASTA sequences.
-            
-        Returns:
-            List[np.ndarray]: List of arrays with simple per-nucleotide features.
-        """
-        features = []
-        for seq in sequences:
-            # Simple per-nucleotide features: one-hot encoding
-            seq_features = []
-            nucleotide_to_idx = {'A': 0, 'U': 1, 'G': 2, 'C': 3, 'N': 4}  # N for unknown
-            
-            for nucleotide in seq:
-                one_hot = np.zeros(6)  # 5 for nucleotides + 1 for position info
-                idx = nucleotide_to_idx.get(nucleotide.upper(), 4)  # Default to 'N'
-                one_hot[idx] = 1
-                # Add simple position encoding
-                one_hot[5] = len(seq_features) / max(len(seq), 1)  # Normalized position
-                seq_features.append(one_hot)
-            
-            features.append(np.array(seq_features))
-        
-        return features
+            raise
     
     def _extract_features(self, oligo_helm: str) -> np.ndarray:
         """
@@ -1092,7 +1063,7 @@ class RNAFMEmbeddings:
         embeddings = self._get_embeddings_batch([fasta_seq])
         return embeddings[0]
     
-    def fit_transform(self, oligo_list: List[str], flatten: bool = False) -> Union[np.ndarray, pd.DataFrame]:
+    def fit_transform(self, oligo_list: List[str]) -> Union[np.ndarray, pd.DataFrame]:
         """
         Extract RNA-FM embeddings from a list of oligo sequences.
         
@@ -1106,9 +1077,9 @@ class RNAFMEmbeddings:
                                            (n_samples, max_seq_len, embedding_dim).
                                            If flatten=True, returns DataFrame with pooled embeddings.
         """
-        return self.transform(oligo_list, flatten=flatten)
+        return self.transform(oligo_list)
     
-    def transform(self, oligo_list: List[str], flatten: bool = False) -> Union[np.ndarray, pd.DataFrame]:
+    def transform(self, oligo_list: List[str]) -> Union[np.ndarray, pd.DataFrame]:
         """
         Transform a list of oligo sequences into RNA-FM embeddings.
         
@@ -1135,7 +1106,8 @@ class RNAFMEmbeddings:
         
         # Process valid sequences in batches
         valid_embeddings = []
-        for i in range(0, len(valid_sequences), self.batch_size):
+        for i in tqdm(range(0, len(valid_sequences), self.batch_size)):
+            #print(i)
             batch_sequences = valid_sequences[i:i + self.batch_size]
             batch_embeddings = self._get_embeddings_batch(batch_sequences)
             valid_embeddings.extend(batch_embeddings)
@@ -1145,58 +1117,383 @@ class RNAFMEmbeddings:
             max_seq_len = max(emb.shape[0] for emb in valid_embeddings)
             embedding_dim = valid_embeddings[0].shape[1]
         else:
-            max_seq_len = 1
-            embedding_dim = 640 if self.model is not None else 6
-        
-        # Use provided max_length if specified
-        if self.max_length is not None:
-            max_seq_len = max(max_seq_len, self.max_length)
-        
-        # Create padded embeddings array
-        all_embeddings = np.zeros((len(oligo_list), max_seq_len, embedding_dim))
-        
-        # Fill in embeddings for valid sequences with padding
-        valid_emb_idx = 0
-        for i, seq in enumerate(fasta_sequences):
-            if seq:  # Valid sequence
-                emb = valid_embeddings[valid_emb_idx]
-                seq_len = min(emb.shape[0], max_seq_len)  # Handle truncation
-                all_embeddings[i, :seq_len, :] = emb[:seq_len]
-                valid_emb_idx += 1
-            # Empty sequences remain as zeros
-        
-        if flatten:
-            # Apply pooling strategy and return as DataFrame
-            pooled_embeddings = []
-            for i in range(len(oligo_list)):
-                seq_emb = all_embeddings[i]
-                # Find actual sequence length (non-zero rows)
-                actual_len = np.any(seq_emb, axis=1).sum()
-                if actual_len > 0:
-                    seq_emb_actual = seq_emb[:actual_len]
-                    
-                    if self.pooling_strategy == "mean":
-                        pooled = np.mean(seq_emb_actual, axis=0)
-                    elif self.pooling_strategy == "max":
-                        pooled = np.max(seq_emb_actual, axis=0)
-                    elif self.pooling_strategy == "cls":
-                        pooled = seq_emb_actual[0]  # First position
-                else:
-                    pooled = np.zeros(embedding_dim)
-                
-                pooled_embeddings.append(pooled)
+            target_features = pd.DataFrame(
+                {
+                    "target_id": targets,
+                    "upstream_flank": upstream_flanks,
+                    "downstream_flank": downstream_flanks,
+                    "local_target_MFE": local_target_mfes,
+                    "local_target_structure": local_target_structs,
+                }
+            )
+            return target_features
+
+    def fit_transform(
+        self,
+        oligo_list: list,
+        targets: list,
+        strand: str = "RNA1",
+        flanking_length: int = 50,
+        numerical: bool = False,
+    ) -> pd.DataFrame:
+        """
+        Fits the featurizer to the data and then transforms it.
+
+        Args:
+            X (list): The input data.
+            targets (list): List of mRNA targets NCBI accession ids.
+            strand (str): The strand identifier, default is "RNA1".
+            flanking_length (int): The length of the flanking sequences to retrieve, default is 50.
+            numerical (bool): Whether to return numerical features, default is False.
+
+        Returns:
+            pd.DataFrame: The transformed data.
+        """
+        target_acc_lists = list(set(targets))
+        targets_sequences = [self._get_entrez_seq(acc) for acc in target_acc_lists]
+        self.targets_dict = dict(zip(target_acc_lists, targets_sequences))
+
+        return self.transform(
+            oligo_list,
+            targets,
+            strand=strand,
+            flanking_length=flanking_length,
+            numerical=numerical,
+        )
+
+class HELMGraph:
+    """
+    HELMGraph is a class for converting oligonucleotide HELM strings into graph
+    representations suitable for Graph Neural Networks (GNNs).
+
+    The generated graph represents the oligonucleotide's chemical structure, where
+    sugar, base, and phosphate components are individual nodes. The backbone is
+    formed by connecting phosphate and sugar nodes sequentially, and each base
+    node branches off from its corresponding sugar.
+
+    Attributes:
+        strands (Optional[List[str]]): A list of specific polymer strands (e.g., ['RNA1'])
+            to include in the graph. If None, all RNA polymers are included.
+        monomer_vocab (Dict[str, int]): A dictionary mapping each unique monomer
+            label to an integer index, used for creating node features.
+    """
+
+    def __init__(self, strands: Optional[List[str]] = None):
+        """
+        Initializes the HELMGraph featurizer.
+
+        Args:
+            strands (Optional[List[str]], optional): List of polymer strands to featurize.
+                Defaults to ['RNA1']. If set to None, all RNA strands found in the
+                HELM string will be processed.
+        """
+        self.strands = strands
+        self.monomer_vocab = {}
+
+    def _extract_monomers(self, oligo_helm: str) -> pd.DataFrame:
+        """
+        Private helper to extract monomers from a HELM string using the global function.
+
+        Args:
+            oligo_helm (str): The HELM string.
+
+        Returns:
+            pd.DataFrame: DataFrame with sugar, base, and phosphate for each position.
+        """
+        return _extract_monomers(oligo_helm, self.strands)
+
+    def fit(self, oligo_list: Union[list, np.ndarray]) -> None:
+        """
+        Builds the monomer vocabulary from a list of HELM strings. This vocabulary
+        is used to create one-hot encoded node features.
+
+        Args:
+            oligo_list (Union[list, np.ndarray]): A list or numpy array of oligonucleotide HELM strings.
+        """
+        # Convert numpy array to list if needed
+        if isinstance(oligo_list, np.ndarray):
+            oligo_list = oligo_list.tolist()
+
+        if not oligo_list:
+            return
+
+        all_monomers_df = pd.concat([self._extract_monomers(oligo) for oligo in oligo_list])
+
+        unique_sugars = all_monomers_df['sugar'].unique()
+        unique_bases = all_monomers_df['base'].unique()
+        unique_phosphates = all_monomers_df['phosphate'].unique()
+
+        # Combine all unique monomer labels into a single sorted list for consistent vocabulary
+        all_unique_monomers = sorted(list(set(
+            np.concatenate([unique_sugars, unique_bases, unique_phosphates])
+        )))
+
+        self.monomer_vocab = {monomer: i for i, monomer in enumerate(all_unique_monomers)}
+
+    def transform(self, oligo_list: Union[list, np.ndarray]) -> List[Dict[str, np.ndarray]]:
+        """
+        Transforms a list of HELM strings into their graph vector representations.
+
+        Args:
+            oligo_list (Union[list, np.ndarray]): A list or numpy array of oligonucleotide HELM strings.
+
+        Returns:
+            List[Dict[str, np.ndarray]]: A list of dictionaries, where each dictionary
+            represents a graph with 'node_features' and 'edge_index'.
+
+        Raises:
+            RuntimeError: If the featurizer has not been fitted yet.
+        """
+        # Convert numpy array to list if needed
+        if isinstance(oligo_list, np.ndarray):
+            oligo_list = oligo_list.tolist()
             
-            pooled_embeddings = np.array(pooled_embeddings)
+        if not self.monomer_vocab:
+            raise RuntimeError("HELMGraph featurizer has not been fitted. Call fit() or fit_transform() first.")
             
-            # Create column names for DataFrame
-            if embedding_dim == 6:
-                # Simple features
-                columns = ["A", "U", "G", "C", "N", "position"]
-            else:
-                # RNA-FM embeddings
-                columns = [f"rna_fm_dim_{i}" for i in range(embedding_dim)]
-            
-            return pd.DataFrame(pooled_embeddings, columns=columns)
+        return [self._helm_to_graph(oligo) for oligo in oligo_list]
+
+    def fit_transform(self, oligo_list: Union[list, np.ndarray]) -> List[Dict[str, np.ndarray]]:
+        """
+        Fits the featurizer on the data and then transforms it into graph representations.
+
+        Args:
+            oligo_list (Union[list, np.ndarray]): A list or numpy array of oligonucleotide HELM strings.
+
+        Returns:
+            List[Dict[str, np.ndarray]]: A list of graph vector representations.
+        """
+        self.fit(oligo_list)
+        return self.transform(oligo_list)
+
+    def _helm_to_graph(self, oligo_helm: str) -> Dict[str, np.ndarray]:
+        """
+        Converts a single HELM string into a graph vector representation.
+
+        The graph is built with distinct nodes for each sugar, base, and phosphate.
+        The connections form a ribose-phosphate backbone with bases as branches.
+
+        Args:
+            oligo_helm (str): The oligonucleotide HELM string.
+
+        Returns:
+            Dict[str, np.ndarray]: A dictionary containing the node feature matrix
+            ('node_features') and the edge index ('edge_index').
+        """
+        monomers_df = self._extract_monomers(oligo_helm)
+        
+        G, node_labels = self.get_graph_and_labels(oligo_helm)
+        
+        # --- Create GNN-ready outputs ---
+        # 1. Node feature matrix (one-hot encoded)
+        num_nodes = G.number_of_nodes()
+        vocab_size = len(self.monomer_vocab)
+        node_feature_matrix = np.zeros((num_nodes, vocab_size), dtype=np.float32)
+        
+        # Ensure nodes are processed in ascending order for consistent feature matrix
+        for node_idx in sorted(G.nodes()):
+            monomer_label = node_labels.get(node_idx)
+            if monomer_label in self.monomer_vocab:
+                feature_idx = self.monomer_vocab[monomer_label]
+                node_feature_matrix[node_idx, feature_idx] = 1.0
+
+        # 2. Edge index (COO format for PyTorch Geometric)
+        if G.number_of_edges() > 0:
+            edge_index = np.array(list(G.edges())).T
         else:
-            # Return 3D array
-            return all_embeddings
+            edge_index = np.empty((2, 0), dtype=np.int64)
+        
+        return {
+            'node_features': node_feature_matrix,
+            'edge_index': edge_index,
+        }
+
+    def get_graph_and_labels(self, oligo_helm: str) -> (nx.Graph, Dict[int, str]):
+        """
+        Generates and returns the NetworkX graph and node labels for a given HELM string.
+        This method is primarily for visualization and debugging.
+
+        Args:
+            oligo_helm (str): The oligonucleotide HELM string.
+
+        Returns:
+            Tuple[nx.Graph, Dict[int, str]]: A tuple containing the NetworkX graph object
+            and a dictionary mapping node indices to their monomer labels.
+        """
+        monomers_df = self._extract_monomers(oligo_helm)
+        
+        G = nx.Graph()
+        node_labels = {}
+        node_offset = 0
+        polymer_node_info = {}
+        
+        for polymer_name in sorted(monomers_df['polymer'].unique()):
+            polymer_monomers = monomers_df[monomers_df['polymer'] == polymer_name].reset_index(drop=True)
+            
+            if "RNA" in polymer_name:
+                num_monomers = len(polymer_monomers)
+                if num_monomers > 0:
+                    start_node_idx = node_offset
+                    end_node_idx = node_offset + (3 * (num_monomers - 1)) + 2
+                    polymer_node_info[polymer_name] = {'start': start_node_idx, 'end': end_node_idx}
+
+                for i, row in polymer_monomers.iterrows():
+                    sugar_idx = node_offset + (3 * i)
+                    base_idx = node_offset + (3 * i) + 1
+                    phosphate_idx = node_offset + (3 * i) + 2
+                    
+                    G.add_node(sugar_idx)
+                    node_labels[sugar_idx] = row['sugar']
+                    
+                    G.add_node(base_idx)
+                    node_labels[base_idx] = row['base']
+                    
+                    G.add_node(phosphate_idx)
+                    node_labels[phosphate_idx] = row['phosphate']
+                    
+                    G.add_edge(sugar_idx, base_idx)
+                    G.add_edge(sugar_idx, phosphate_idx)
+                    
+                    if i > 0:
+                        prev_phosphate_idx = node_offset + (3 * (i - 1)) + 2
+                        G.add_edge(prev_phosphate_idx, sugar_idx)
+                
+                node_offset += 3 * len(polymer_monomers)
+
+        rna_polymers = [p for p in polymer_node_info if 'RNA' in p]
+        if len(rna_polymers) == 2:
+            rna1_name, rna2_name = rna_polymers[0], rna_polymers[1]
+            G.add_edge(polymer_node_info[rna1_name]['start'], polymer_node_info[rna2_name]['end'])
+            G.add_edge(polymer_node_info[rna2_name]['start'], polymer_node_info[rna1_name]['end'])
+       
+        return G, node_labels
+
+
+class SMILESGraph:
+    """
+    SMILESGraph is a class for converting SMILES strings into graph
+    representations suitable for Graph Neural Networks (GNNs).
+
+    The generated graph represents the molecule's chemical structure, where
+    atoms are nodes and bonds are edges.
+
+    Attributes:
+        atom_vocab (Dict[str, int]): A dictionary mapping each unique atom
+            symbol to an integer index, used for creating node features.
+    """
+
+    def __init__(self):
+        """
+        Initializes the SMILESGraph featurizer.
+        """
+        try:
+            from rdkit import Chem
+            self.Chem = Chem
+        except ImportError:
+            raise ImportError("RDKit is required for SMILESGraph. Please install it with 'pip install rdkit-pypi'")
+        self.atom_vocab = {}
+
+    def fit(self, smiles_list: Union[list, np.ndarray]) -> None:
+        """
+        Builds the atom vocabulary from a list of SMILES strings. This vocabulary
+        is used to create one-hot encoded node features.
+
+        Args:
+            smiles_list (Union[list, np.ndarray]): A list or numpy array of SMILES strings.
+        """
+        if isinstance(smiles_list, np.ndarray):
+            smiles_list = smiles_list.tolist()
+            
+        if not smiles_list:
+            return
+
+        all_atoms = set()
+        for smiles in smiles_list:
+            mol = self.Chem.MolFromSmiles(smiles)
+            if mol:
+                for atom in mol.GetAtoms():
+                    all_atoms.add(atom.GetSymbol())
+        
+        self.atom_vocab = {atom_symbol: i for i, atom_symbol in enumerate(sorted(list(all_atoms)))}
+
+    def transform(self, smiles_list: Union[list, np.ndarray]) -> List[Dict[str, np.ndarray]]:
+        """
+        Transforms a list of SMILES strings into their graph vector representations.
+
+        Args:
+            smiles_list (Union[list, np.ndarray]): A list or numpy array of SMILES strings.
+
+        Returns:
+            List[Dict[str, np.ndarray]]: A list of dictionaries, where each dictionary
+            represents a graph with 'node_features' and 'edge_index'.
+
+        Raises:
+            RuntimeError: If the featurizer has not been fitted yet.
+        """
+        if isinstance(smiles_list, np.ndarray):
+            smiles_list = smiles_list.tolist()
+            
+        if not self.atom_vocab:
+            raise RuntimeError("SMILESGraph featurizer has not been fitted. Call fit() or fit_transform() first.")
+            
+        return [self._smiles_to_graph(smiles) for smiles in smiles_list]
+
+    def fit_transform(self, smiles_list: Union[list, np.ndarray]) -> List[Dict[str, np.ndarray]]:
+        """
+        Fits the featurizer on the data and then transforms it into graph representations.
+
+        Args:
+            smiles_list (Union[list, np.ndarray]): A list or numpy array of SMILES strings.
+
+        Returns:
+            List[Dict[str, np.ndarray]]: A list of graph vector representations.
+        """
+        self.fit(smiles_list)
+        return self.transform(smiles_list)
+
+    def _smiles_to_graph(self, smiles: str) -> Dict[str, np.ndarray]:
+        """
+        Converts a single SMILES string into a graph vector representation.
+
+        Args:
+            smiles (str): The SMILES string.
+
+        Returns:
+            Dict[str, np.ndarray]: A dictionary containing the node feature matrix
+            ('node_features') and the edge index ('edge_index').
+        """
+        mol = self.Chem.MolFromSmiles(smiles)
+        if not mol:
+            return {
+                'node_features': np.empty((0, len(self.atom_vocab)), dtype=np.float32),
+                'edge_index': np.empty((2, 0), dtype=np.int64),
+            }
+
+        # 1. Node feature matrix (one-hot encoded)
+        num_nodes = mol.GetNumAtoms()
+        vocab_size = len(self.atom_vocab)
+        node_feature_matrix = np.zeros((num_nodes, vocab_size), dtype=np.float32)
+
+        for atom in mol.GetAtoms():
+            atom_idx = atom.GetIdx()
+            atom_symbol = atom.GetSymbol()
+            if atom_symbol in self.atom_vocab:
+                feature_idx = self.atom_vocab[atom_symbol]
+                node_feature_matrix[atom_idx, feature_idx] = 1.0
+
+        # 2. Edge index (COO format for PyTorch Geometric)
+        if mol.GetNumBonds() > 0:
+            edge_list = []
+            for bond in mol.GetBonds():
+                i = bond.GetBeginAtomIdx()
+                j = bond.GetEndAtomIdx()
+                edge_list.append((i, j))
+                edge_list.append((j, i)) # Add reverse edge for undirected graph
+            edge_index = np.array(edge_list, dtype=np.int64).T
+        else:
+            edge_index = np.empty((2, 0), dtype=np.int64)
+
+        return {
+            'node_features': node_feature_matrix,
+            'edge_index': edge_index,
+        }
