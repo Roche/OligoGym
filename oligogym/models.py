@@ -1,3 +1,5 @@
+# import gpytorch
+import numpy as np
 import pandas as pd
 import pickle
 import pytorch_lightning as pl
@@ -5,6 +7,9 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import xgboost as xgb
+import catboost as cb
+import torch_geometric.nn as gnn
+
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.gaussian_process import GaussianProcessClassifier, GaussianProcessRegressor
@@ -20,6 +25,7 @@ from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
 from sklearn.model_selection import train_test_split
 from tabpfn import TabPFNRegressor, TabPFNClassifier
 from typing import List
+from torch_geometric.data import Data, DataLoader
 from torchinfo import summary
 from typing import Union
 
@@ -78,7 +84,6 @@ class SKLearnModel:
         Returns:
             numpy.ndarray: Predicted output from the model.
         """
-
         if len(X.shape) > 2:
             X = X.reshape(X.shape[0], -1)
         return self.model.predict(X)
@@ -291,6 +296,45 @@ class XGBoostModel(SKLearnModel):
                 n_estimators=n_estimators, max_depth=max_depth, **model_kwargs
             )
 
+
+class CatBoostModel(SKLearnModel):
+    """
+    A model wrapper for CatBoost that supports both regression and classification tasks.
+
+    Args:
+        task (str): The type of task to perform. Must be either "regression" or "classification". Defaults to "regression".
+        iterations (int): The number of boosting iterations. Defaults to 100.
+        depth (int): The depth of the trees. Defaults to 6.
+        learning_rate (float): The learning rate for training. Defaults to 0.1.
+        **model_kwargs: Additional keyword arguments to pass to the CatBoost model.
+
+    Raises:
+        AssertionError: If the task is not "regression" or "classification".
+    """
+
+    def __init__(
+        self,
+        task: str = "regression",
+        iterations: int = 100,
+        depth: int = 6,
+        learning_rate: float = 0.1,
+        **model_kwargs,
+    ):
+        """
+        Initializes the model with specified parameters.
+        """
+        assert task in ["regression", "classification"], "Task undefined"
+        self.task = task
+        if self.task == "regression":
+            self.model = cb.CatBoostRegressor(
+                iterations=iterations, depth=depth, learning_rate=learning_rate, verbose=False, **model_kwargs
+            )
+        elif self.task == "classification":
+            self.model = cb.CatBoostClassifier(
+                iterations=iterations, depth=depth, learning_rate=learning_rate, verbose=False, **model_kwargs
+            )
+
+
 class TabPFNModel(SKLearnModel):
     """
     A model class that wraps around TabPFNRegressor and TabPFNClassifier.
@@ -479,23 +523,39 @@ class LightningModel(pl.LightningModule):
         """
         print(summary(self, shape))
 
-    def predict(self, X):
+    def predict(self, X, batch_size=512):
         """
-        Predicts the output for the given input data.
+        Predicts the output for the given input data using batch processing.
 
         Args:
             X (numpy.ndarray): The input data.
+            batch_size (int): Batch size for prediction. Defaults to 32.
 
         Returns:
             numpy.ndarray: The predicted output.
         """
         if isinstance(X, pd.DataFrame):
             X = X.values
-        X = torch.tensor(X, dtype=torch.float32)
-        if len(X.shape) == 3:
-            X = X.transpose(1, 2)
-        pred = self(X)
-        return pred.detach().cpu().numpy()
+        
+        self.eval()  # Set model to evaluation mode
+        predictions = []
+        
+        with torch.no_grad():  # Disable gradient computation for efficiency
+            for i in range(0, len(X), batch_size):
+                batch_X = X[i:i+batch_size]
+                batch_X = torch.tensor(batch_X, dtype=torch.float32)
+                
+                if len(batch_X.shape) == 3:
+                    batch_X = batch_X.transpose(1, 2)
+                
+                # Move to same device as model if using GPU
+                if next(self.parameters()).is_cuda:
+                    batch_X = batch_X.cuda()
+                
+                batch_pred = self(batch_X)
+                predictions.append(batch_pred.detach().cpu().numpy())
+        
+        return np.concatenate(predictions, axis=0)
 
     def save(self, path):
         """
@@ -868,7 +928,211 @@ class CausalCNN(LightningModel):
             x = nn.functional.softmax(x, dim=1)
         return x
 
+class GNN(LightningModel):
+    """
+    Graph Neural Network (GNN) model for regression or classification on graph-structured data.
+    This model uses Graph Convolutional Networks (GCN) to process graph data and is
+    designed to work with the `HELMGraph` and `SMILESGraph` featurizers.
 
+    Args:
+        input_dim (int): The number of input node features.
+        hidden_dim (int, optional): The number of hidden dimensions in GCN layers. Defaults to 64.
+        output_dim (int, optional): The number of output dimensions. Defaults to 1.
+        num_layers (int, optional): The number of GCN layers. Defaults to 2.
+        pooling_operation (str, optional): The type of pooling operation to use. Must be either "max" or "avg". Defaults to "max".
+        task (str, optional): The task type, either "regression" or "classification". Defaults to "regression".
+
+    Raises:
+        AssertionError: If `task` is not "regression" or "classification".
+        AssertionError: If `pooling_operation` is not "max" or "avg".
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        hidden_dim: int = 64,
+        output_dim: int = 1,
+        num_layers: int = 2,
+        pooling_operation: str = "max",
+        task: str = "regression",
+    ):
+        """
+        Initializes the GNN model.
+        """
+        super().__init__()
+        assert task in ["regression", "classification"], "Task undefined"
+        assert pooling_operation in ["max", "avg", "sum"], "Pooling operation undefined"
+        self.task = task
+        self.pooling_operation = pooling_operation
+
+        self.conv_layers = nn.ModuleList()
+        self.conv_layers.append(gnn.GCNConv(input_dim, hidden_dim))
+        for _ in range(num_layers - 1):
+            self.conv_layers.append(gnn.GCNConv(hidden_dim, hidden_dim))
+
+        self.fc = nn.Linear(hidden_dim, output_dim)
+        self.loss_fun = (
+            nn.MSELoss(reduction='none') if self.task == "regression" else nn.CrossEntropyLoss(reduction='none')
+        )
+
+    def forward(self, data):
+        """
+        Forward pass of the GNN model.
+
+        Args:
+            data (torch_geometric.data.Data): A batch of graph data.
+
+        Returns:
+            torch.Tensor: The model's output.
+        """
+        x, edge_index, batch = data.x, data.edge_index, data.batch
+
+        for conv_layer in self.conv_layers:
+            x = conv_layer(x, edge_index)
+            x = nn.functional.relu(x)
+
+        # Apply global pooling based on the specified operation
+        if self.pooling_operation == "max":
+            x = gnn.global_max_pool(x, batch)
+        elif self.pooling_operation == "avg":
+            x = gnn.global_mean_pool(x, batch)
+        elif self.pooling_operation == "sum":
+            x = gnn.global_add_pool(x, batch)
+
+        x = self.fc(x)
+
+        if self.task == "classification":
+            x = nn.functional.softmax(x, dim=1)
+        return x
+
+    def fit(
+        self,
+        X,
+        y,
+        X_val=None,
+        y_val=None,
+        sample_weight=None,
+        val_split: bool = True,
+        max_epochs: int = 100,
+        early_stopping: bool = True,
+        early_stopping_kwargs: dict = {"patience": 5},
+        batch_size: int = 32,
+        learning_rate: float = 0.001,
+        weight_decay: float = 0.01,
+        verbose: bool = True,
+        **trainer_kwargs,
+    ):
+        """
+        Trains the GNN model using graph data.
+
+        Args:
+            X (list): A list of graph dictionaries from `GraphVector`.
+            y (array-like): Training data labels.
+            X_val (list, optional): Validation graph data. Defaults to None.
+            y_val (array-like, optional): Validation data labels. Defaults to None.
+            ... (other args are the same as the parent class)
+        """
+        self.learning_rate = learning_rate
+        self.weight_decay = weight_decay
+
+        if verbose is False:
+            pl._logger.setLevel(0)
+
+        # Convert graph dictionaries to PyG Data objects
+        dataset = []
+        for i, graph_dict in enumerate(X):
+            data = Data(
+                x=torch.tensor(graph_dict['node_features'], dtype=torch.float32),
+                edge_index=torch.tensor(graph_dict['edge_index'], dtype=torch.long),
+                y=torch.tensor([y[i]], dtype=torch.float32)
+            )
+            if sample_weight is not None:
+                data.sample_weight = torch.tensor([sample_weight[i]], dtype=torch.float32)
+            dataset.append(data)
+
+        # Create validation dataloader
+        val_dataloader = None
+        if X_val is not None:
+            val_dataset = []
+            for i, graph_dict in enumerate(X_val):
+                data = Data(
+                    x=torch.tensor(graph_dict['node_features'], dtype=torch.float32),
+                    edge_index=torch.tensor(graph_dict['edge_index'], dtype=torch.long),
+                    y=torch.tensor([y_val[i]], dtype=torch.float32)
+                )
+                val_dataset.append(data)
+
+            val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+            train_dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+        elif val_split:
+            train_size = int(0.8 * len(dataset))
+            val_size = len(dataset) - train_size
+            train_subset, val_subset = torch.utils.data.random_split(dataset, [train_size, val_size])
+            train_dataloader = DataLoader(train_subset, batch_size=batch_size, shuffle=True)
+            val_dataloader = DataLoader(val_subset, batch_size=batch_size, shuffle=False)
+        else: # no validation
+            train_dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+        if early_stopping:
+            early_stop_callback = EarlyStopping(monitor="val_loss", mode="min", **early_stopping_kwargs)
+            self.trainer = pl.Trainer(max_epochs=max_epochs, callbacks=[early_stop_callback], **trainer_kwargs)
+        else:
+            self.trainer = pl.Trainer(max_epochs=max_epochs, **trainer_kwargs)
+
+        self.trainer.fit(self, train_dataloader, val_dataloader)
+        pl._logger.setLevel(20)
+
+    def training_step(self, batch, batch_idx):
+        y_hat = self(batch)
+        y = batch.y
+        y_hat = torch.squeeze(y_hat)
+
+        loss_unreduced = self.loss_fun(y_hat, y)
+
+        if hasattr(batch, 'sample_weight'):
+            loss = (loss_unreduced * batch.sample_weight).mean()
+        else:
+            loss = loss_unreduced.mean()
+
+        self.log("train_loss", loss, prog_bar=True)
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        y_hat = self(batch)
+        y = batch.y
+        y_hat = torch.squeeze(y_hat)
+        loss = self.loss_fun(y_hat, y).mean()
+        self.log("val_loss", loss, prog_bar=True)
+
+    def predict(self, X):
+        """
+        Predicts the output for the given graph data.
+
+        Args:
+            X (list): A list of graph dictionaries from `GraphVector`.
+
+        Returns:
+            numpy.ndarray: The predicted output.
+        """
+        dataset = []
+        for graph_dict in X:
+            data = Data(
+                x=torch.tensor(graph_dict['node_features'], dtype=torch.float32),
+                edge_index=torch.tensor(graph_dict['edge_index'], dtype=torch.long)
+            )
+            dataset.append(data)
+
+        dataloader = DataLoader(dataset, batch_size=32, shuffle=False)
+
+        self.eval()
+        predictions = []
+        with torch.no_grad():
+            for batch in dataloader:
+                pred = self(batch)
+                predictions.append(pred.detach().cpu())
+
+        return torch.cat(predictions).numpy()
+    
 class Transformer(LightningModel):
     """
     Transformer model for regression or classification tasks on sequence data.
